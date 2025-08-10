@@ -1,0 +1,153 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  id-token: write      # for trusted publishing
+  contents: write      # to create releases if needed
+  attestations: write  # for build provenance
+
+jobs:
+  build-linux:
+    name: Build Linux wheels (${{ matrix.target }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [x86_64]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build Linux wheels
+        uses: PyO3/maturin-action@v1
+        with:
+          rust-toolchain: stable
+          target: ${{ matrix.target }}
+          manylinux: "off"
+          command: build
+          args: --release --out dist --find-interpreter
+      - name: Rename wheel to use manylinux tag
+        run: |
+          cd dist
+          for wheel in *-linux_*.whl; do
+            new_name=$(echo "$wheel" | sed 's/linux_x86_64/manylinux_2_17_x86_64.manylinux2014_x86_64/')
+            mv "$wheel" "$new_name"
+            echo "Renamed $wheel to $new_name"
+          done
+          ls -la *.whl
+      - name: Upload wheels
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheels-linux-${{ matrix.target }}
+          path: dist
+
+  # musllinux builds disabled - same Docker issues as manylinux
+  # build-musllinux:
+  #   name: Build musllinux wheels (${{ matrix.target }})
+  #   runs-on: ubuntu-latest
+  #   strategy:
+  #     fail-fast: false
+  #     matrix:
+  #       target: [x86_64, aarch64]
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #     - name: Build musllinux
+  #       uses: PyO3/maturin-action@v1
+  #       with:
+  #         rust-toolchain: stable
+  #         target: ${{ matrix.target }}
+  #         manylinux: musllinux_1_2
+  #         command: build
+  #         args: --release --out dist --find-interpreter
+  #     - name: Upload wheels
+  #       uses: actions/upload-artifact@v4
+  #       with:
+  #         name: wheels-musllinux-${{ matrix.target }}
+  #         path: dist
+
+  build-macos:
+    name: Build macOS wheels (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-13, macos-14]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build macOS wheels
+        uses: PyO3/maturin-action@v1
+        with:
+          rust-toolchain: stable
+          command: build
+          args: --release --out dist --find-interpreter
+      - name: Upload wheels
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheels-${{ matrix.os }}
+          path: dist
+
+  build-windows:
+    name: Build Windows wheels (${{ matrix.target }})
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [x86_64, i686]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build Windows wheels
+        uses: PyO3/maturin-action@v1
+        with:
+          rust-toolchain: stable
+          target: ${{ matrix.target }}-pc-windows-msvc
+          command: build
+          args: --release --out dist --find-interpreter
+      - name: Upload wheels
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheels-windows-${{ matrix.target }}
+          path: dist
+
+  build-sdist:
+    name: Build sdist
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build sdist
+        uses: PyO3/maturin-action@v1
+        with:
+          rust-toolchain: stable
+          command: build
+          args: --release --out dist --sdist
+      - name: Upload sdist
+        uses: actions/upload-artifact@v4
+        with:
+          name: sdist
+          path: dist
+
+  publish:
+    name: Publish to PyPI (Trusted Publishing)
+    needs: [build-linux, build-macos, build-windows, build-sdist]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: '*'
+          path: dist
+          merge-multiple: true
+      - name: List downloaded files
+        run: find dist -type f -name "*.whl" -o -name "*.tar.gz" | head -10
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: |
+            dist/**/*.whl
+            dist/**/*.tar.gz
+      - name: Publish to PyPI with OIDC
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist
+          skip-existing: true

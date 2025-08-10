@@ -1,0 +1,53 @@
+[build-system]
+requires = ["maturin>=1.8"]
+build-backend = "maturin"
+
+[project]
+name = "dextrades"
+version = "0.1.10"
+requires-python = ">=3.12"
+description = "High-performance DEX swap streaming and analysis (Rust/PyO3)"
+readme = "README.md"
+authors = [
+    { name = "Dextrades contributors" }
+]
+license = { file = "LICENSE" }
+classifiers = [
+    "License :: OSI Approved :: MIT License",
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python",
+    "Programming Language :: Rust",
+]
+keywords = ["ethereum", "dex", "uniswap", "streaming", "polars", "arrow", "pyarrow", "rust", "pyo3"]
+dependencies = [
+    "pyarrow>=15.0.0",
+]
+[project.urls]
+Homepage = "https://github.com/elyase/dextrades"
+Repository = "https://github.com/elyase/dextrades"
+Documentation = "https://github.com/elyase/dextrades#readme"
+
+[project.optional-dependencies]
+dev = ["pytest"]
+
+[tool.maturin]
+bindings = "pyo3"
+develop = { uv = true }
+python-packages = ["dextrades_cli"]
+python-source = "python"
+
+[tool.uv]
+cache-keys = [{ file = "pyproject.toml" }, { file = "src/**/*.rs"}]
+config-settings = { build-args = '--profile=dev' }
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3.5",
+]
+
+[tool.pytest.ini_options]
+asyncio_default_fixture_loop_scope = "function"
+
+[project.scripts]
+dextrades = "dextrades_cli.cli:main"
