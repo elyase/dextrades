@@ -84,6 +84,17 @@ time                 dex           bought           sold              value_usd 
 2023-04-08 01:58:47  Uniswap V2    0.0452  WETH      0.7000  QNT         $84.38  0x4a30  0x5428
 2023-04-08 01:58:47  Uniswap V2    3.2402  WETH      2.9994  PAXG     $6,045.62  0xdBC2  0x8f46
 ```
+## 📊 Available Fields
+
+| Enricher | Fields Added | Description |
+|----------|--------------|-------------|
+| **Core** | `block_number`, `tx_hash`, `log_index`, `dex_protocol`, `pool_address` | Always present |
+| **transaction** | `tx_from`, `tx_to`, `gas_used` | Transaction context |
+| **timestamp** | `block_timestamp` | Block mining time |
+| **token_metadata** | `token0_address`, `token1_address`, `token0_symbol`, `token1_symbol`, `token0_decimals`, `token1_decimals` | Token information |
+| **swap** | `token_bought_address`, `token_sold_address`, `token_bought_symbol`, `token_sold_symbol`, `token_bought_amount`, `token_sold_amount`, `token_bought_amount_raw`, `token_sold_amount_raw` | Trade direction & amounts |
+| **price_usd** | `value_usd`, `value_usd_method`, `chainlink_updated_at` | USD valuation (stablecoins + Chainlink ETH/USD) |
+
 
 ## 🗺️ Roadmap
 
@@ -113,3 +124,4 @@ time                 dex           bought           sold              value_usd 
 - [ ] Light metrics: stage counters and provider health snapshot
 - [ ] Additional DEX protocols
 - [ ] Optional persistent caches and Parquet/Polars export helpers
+
