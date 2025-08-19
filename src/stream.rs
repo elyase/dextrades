@@ -426,6 +426,7 @@ pub fn stream_dex_swaps(
     enrich_timestamps: Option<bool>, // Optional timestamp enrichment
     enrich_usd: Option<bool>,        // Optional USD pricing enrichment
     max_concurrent_chunks: Option<usize>, // NEW: Control chunk-level concurrency
+    routers: Option<Vec<String>>,    // Optional router whitelist (tx.to addresses)
 ) -> PyResult<DextradesArrowStream> {
     if rpc_urls.is_empty() {
         return Err(pyo3::exceptions::PyValueError::new_err(
@@ -450,7 +451,7 @@ pub fn stream_dex_swaps(
     let enrich_timestamps = enrich_timestamps.unwrap_or(false);
 
     // Build configuration synchronously
-    let config = if let Some(batch_size_param) = batch_size {
+    let mut config = if let Some(batch_size_param) = batch_size {
         DextradesConfig::builder()
             .rpc_urls(rpc_urls.clone())
             .streaming_batch_size(batch_size_param)
@@ -464,6 +465,7 @@ pub fn stream_dex_swaps(
         }
         cfg
     };
+    if let Some(r) = routers { config.router_whitelist = Some(r); }
 
     // Create service using the runtime (blocking only for init)
     let service = match rt.block_on(async { DextradesService::new(config).await }) {
@@ -1047,6 +1049,17 @@ pub fn apply_swap_filters(events: &[SwapEvent], config: &DextradesConfig) -> Vec
     events
         .iter()
         .filter(|event| {
+            // Router whitelist filter (requires transaction enricher)
+            if let Some(ref routers) = config.router_whitelist {
+                match &event.tx_to {
+                    Some(to) => {
+                        let pass = routers.iter().any(|r| r.eq_ignore_ascii_case(to));
+                        if !pass { return false; }
+                    }
+                    None => return false,
+                }
+            }
+
             // Volume filter - skip if token amounts are not available
             if let Some(_min_volume) = config.min_volume_filter {
                 // For now, we can only filter on token amounts since we don't have USD values

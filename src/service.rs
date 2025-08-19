@@ -49,22 +49,38 @@ impl DextradesService {
         info!("🔥 [DextradesService] Starting global streaming session warmup");
         let warmup_start = std::time::Instant::now();
         
-        // Pre-warm connection pool with reliable, well-known tokens
-        let warmup_tokens = vec![
-            "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2", // WETH - most common
-            "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48", // USDC - very reliable
-            "0xdAC17F958D2ee523a2206206994597C13D831ec7", // USDT - high volume token
-            "0x6B175474E89094C44Da98b954EedeAC495271d0F", // DAI - another common token
-        ];
-        
-        info!("🌡️ [DextradesService] Warming up with {} tokens", warmup_tokens.len());
+        // Determine warmup tokens based on network and overrides
+        let chain_id = self.get_chain_id().await.unwrap_or(0);
+        let warmup_tokens: Vec<String> = if let Some(ref ov) = self.config.network_overrides {
+            if !ov.warmup_tokens.is_empty() { ov.warmup_tokens.clone() } else { Vec::new() }
+        } else if chain_id == 1 {
+            vec![
+                "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2".to_string(), // WETH
+                "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48".to_string(), // USDC
+                "0xdAC17F958D2ee523a2206206994597C13D831ec7".to_string(), // USDT
+                "0x6B175474E89094C44Da98b954EedeAC495271d0F".to_string(), // DAI
+            ]
+        } else {
+            Vec::new()
+        };
+
+        if warmup_tokens.is_empty() {
+            info!("🌡️ [DextradesService] No warmup tokens configured for chain {} - skipping token warmup", chain_id);
+            // Still do a lightweight call to warm connections
+            let _ = self.get_block_number().await;
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+            info!("✅ [DextradesService] Global warmup completed in {:?}", warmup_start.elapsed());
+            return Ok(());
+        }
+
+        info!("🌡️ [DextradesService] Warming up with {} tokens on chain {}", warmup_tokens.len(), chain_id);
         
         // Parallel warmup to populate connection pool quickly
         let warmup_tasks: Vec<_> = warmup_tokens.into_iter()
             .map(|addr| {
                 let service = self.clone();
                 async move {
-                    let result = service.get_token_metadata(addr).await;
+                    let result = service.get_token_metadata_with_chunk_id(&addr, "WARMUP").await;
                     match result {
                         Ok(Some(token_info)) => {
                             debug!("✅ [Warmup] {} -> {}", addr, token_info.symbol);
@@ -81,7 +97,7 @@ impl DextradesService {
         futures::future::join_all(warmup_tasks).await;
         
         // Progressive delay to allow connection pool settling
-        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
         
         let warmup_duration = warmup_start.elapsed();
         info!("✅ [DextradesService] Global warmup completed in {:?}", warmup_duration);
@@ -115,15 +131,13 @@ impl DextradesService {
                 success_result
             }
             Err(e) => {
-                // ⚠️ CRITICAL CHANGE: DON'T SWALLOW ERRORS!
-                // Previous code: Ok(None) - hid all failures
-                // New code: Propagate error so we can see what's actually failing
-                
-                error!("🚨 Token metadata failed for {} (chunk {}): {}", address, chunk_id, e);
-                
-                let error_result = Err(e.into());
-                
-                error_result
+                // Reduce severity for warmup failures to avoid noisy startup logs
+                if chunk_id == "WARMUP" {
+                    debug!("[Warmup] Token metadata failed for {} (chunk {}): {}", address, chunk_id, e);
+                } else {
+                    error!("🚨 Token metadata failed for {} (chunk {}): {}", address, chunk_id, e);
+                }
+                Err(e.into())
             }
         };
         

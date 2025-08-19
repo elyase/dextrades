@@ -5,8 +5,6 @@ use eyre::Result;
 use log::{debug, warn};
 use moka::sync::Cache;
 
-// Chainlink ETH/USD Aggregator (mainnet)
-const ETH_USD_AGGREGATOR: &str = "0x5f4ec3df9cbd43714fe2740f5e3616155c5b8419";
 const ONE_DAY_SECS: i64 = 24 * 60 * 60;
 
 sol! {
@@ -24,11 +22,12 @@ sol! {
     }
 }
 
-/// Minimal Chainlink price service for ETH/USD with per-block caching.
+/// Minimal Chainlink-like price service for native/USD with per-block caching.
 /// Uses native Alloy providers and .block(block.into()) for historical correctness.
 #[derive(Clone)]
 pub struct ChainlinkPriceService {
     rpc_urls: Vec<String>,
+    aggregator: Address,
     // Cache block -> (price, updated_at)
     price_cache: Cache<u64, (f64, u64)>,
     // Cache decimals
@@ -36,25 +35,22 @@ pub struct ChainlinkPriceService {
 }
 
 impl ChainlinkPriceService {
-    pub fn new(rpc_urls: Vec<String>, cache_capacity: u64) -> Self {
-        Self {
-            rpc_urls,
-            price_cache: Cache::builder().max_capacity(cache_capacity).build(),
-            decimals_cache: Cache::builder().max_capacity(4).build(),
-        }
+    pub fn new(rpc_urls: Vec<String>, aggregator: Address, cache_capacity: u64) -> Self {
+        Self { rpc_urls, aggregator, price_cache: Cache::builder().max_capacity(cache_capacity).build(), decimals_cache: Cache::builder().max_capacity(4).build() }
     }
 
     async fn get_decimals_any(&self) -> Result<u8> {
-        if let Some(d) = self.decimals_cache.get("eth_usd") { return Ok(d); }
+        let cache_key = format!("decimals:{}", self.aggregator);
+        if let Some(d) = self.decimals_cache.get(cache_key.as_str()) { return Ok(d); }
         let url = self
             .rpc_urls
             .get(0)
             .ok_or_else(|| eyre::eyre!("No RPC URLs configured for ChainlinkPriceService"))?
             .parse()?;
         let provider = ProviderBuilder::new().connect_http(url);
-        let agg = AggregatorV3Interface::new(ETH_USD_AGGREGATOR.parse::<Address>()?, provider);
+        let agg = AggregatorV3Interface::new(self.aggregator, provider);
         let d: u8 = agg.decimals().call().await?;
-        self.decimals_cache.insert("eth_usd".to_string(), d);
+        self.decimals_cache.insert(cache_key, d);
         Ok(d)
     }
 
@@ -75,7 +71,7 @@ impl ChainlinkPriceService {
             .ok_or_else(|| eyre::eyre!("No RPC URLs configured for ChainlinkPriceService"))?
             .parse()?;
         let provider = ProviderBuilder::new().connect_http(url);
-        let agg = AggregatorV3Interface::new(ETH_USD_AGGREGATOR.parse::<Address>()?, provider);
+        let agg = AggregatorV3Interface::new(self.aggregator, provider);
 
         // Fetch decimals (cached)
         let decimals = self.get_decimals_any().await? as u32;
@@ -108,7 +104,7 @@ impl ChainlinkPriceService {
         let price = (ans_i128 as f64) / scale;
 
         self.price_cache.insert(block_number, (price, updated));
-        debug!("ETH/USD at block {} = {} (updated_at {})", block_number, price, updated);
+        debug!("Aggregator {} price at block {} = {} (updated_at {})", self.aggregator, block_number, price, updated);
         Ok(Some((price, updated)))
     }
 }

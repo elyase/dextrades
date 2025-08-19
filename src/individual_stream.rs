@@ -37,6 +37,7 @@ pub fn stream_individual_swaps(
     rpc_urls: Vec<String>,
     enrich_timestamps: Option<bool>,
     enrich_usd: Option<bool>,
+    routers: Option<Vec<String>>,
 ) -> PyResult<DextradesArrowStream> {
     if rpc_urls.is_empty() {
         return Err(pyo3::exceptions::PyValueError::new_err(
@@ -66,6 +67,7 @@ pub fn stream_individual_swaps(
         // Create service with immediate streaming configuration
         let mut config = DextradesConfig::immediate_streaming();
         config.default_rpc_urls = rpc_urls.clone();
+        if let Some(r) = routers { config.router_whitelist = Some(r); }
         
         info!("🚀 [Individual Stream] Using immediate streaming mode");
         

@@ -22,6 +22,19 @@ pub enum ProviderStrategy {
     Shard,
 }
 
+/// Optional per-network overrides for pricing and warmup
+#[derive(Debug, Clone, Default)]
+pub struct NetworkOverrides {
+    /// Wrapped native token address (e.g., WETH, wCAMP)
+    pub native_wrapped: Option<String>,
+    /// Addresses to treat as USD stables on this network
+    pub stable_addresses: Vec<String>,
+    /// Chainlink-style native/USD aggregator address for this network
+    pub native_usd_aggregator: Option<String>,
+    /// Addresses to warm up at session start (should exist on current chain)
+    pub warmup_tokens: Vec<String>,
+}
+
 /// Configuration for the Dextrades library
 #[derive(Debug, Clone)]
 pub struct DextradesConfig {
@@ -75,6 +88,10 @@ pub struct DextradesConfig {
     pub shard_logs: bool,
     /// Provider strategy for handling multiple RPC endpoints
     pub provider_strategy: ProviderStrategy,
+    /// Optional per-network overrides (pricing, warmup)
+    pub network_overrides: Option<NetworkOverrides>,
+    /// Optional whitelist of router addresses (tx.to must match one of these)
+    pub router_whitelist: Option<Vec<String>>,
 }
 
 impl Default for DextradesConfig {
@@ -114,6 +131,8 @@ impl Default for DextradesConfig {
             providers_to_race: 2, // Race top-2 providers by default
             shard_logs: false,
             provider_strategy: ProviderStrategy::Race, // Race by default for reliability
+            network_overrides: None,
+            router_whitelist: None,
         }
     }
 }
@@ -209,6 +228,18 @@ impl ConfigBuilder {
     /// Set the provider strategy for handling multiple RPC endpoints
     pub fn provider_strategy(mut self, strategy: ProviderStrategy) -> Self {
         self.config.provider_strategy = strategy;
+        self
+    }
+
+    /// Set per-network overrides (pricing, warmup)
+    pub fn network_overrides(mut self, overrides: NetworkOverrides) -> Self {
+        self.config.network_overrides = Some(overrides);
+        self
+    }
+
+    /// Set a whitelist of router addresses to filter swaps by tx.to
+    pub fn router_whitelist(mut self, routers: Vec<String>) -> Self {
+        self.config.router_whitelist = Some(routers);
         self
     }
     

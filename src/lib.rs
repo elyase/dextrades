@@ -28,6 +28,7 @@ mod types;
 mod chainlink_price_service;
 
 use config::{DextradesConfig, ConfigBuilder};
+use crate::config::NetworkOverrides;
 use service::DextradesService;
 use stream::*;
 use std::sync::Arc;
@@ -136,6 +137,8 @@ impl PyConfigBuilder {
         self.inner = self.inner.clone().provider_strategy(strategy_enum);
         Ok(())
     }
+
+    // Note: network_overrides are currently only configurable via Client(..., network_overrides={...})
     
     /// Build the configuration and create a client
     fn build_client(&self) -> PyResult<Client> {
@@ -168,7 +171,7 @@ pub struct Client {
 impl Client {
     /// Create a new client with the given RPC URLs and configuration
     #[new]
-    #[pyo3(signature = (rpc_urls, max_concurrent_requests=10, cache_size=1000, providers_to_race=2, shard_logs=false, provider_strategy="race"))]
+    #[pyo3(signature = (rpc_urls, max_concurrent_requests=10, cache_size=1000, providers_to_race=2, shard_logs=false, provider_strategy="race", network_overrides=None))]
     fn new(
         rpc_urls: Vec<String>,
         max_concurrent_requests: usize,
@@ -176,6 +179,7 @@ impl Client {
         providers_to_race: usize,
         shard_logs: bool,
         provider_strategy: &str,
+        network_overrides: Option<PyObject>,
     ) -> PyResult<Self> {
         init_logger(); // Initialize the logger
         let rt = pyo3_async_runtimes::tokio::get_runtime();
@@ -189,19 +193,25 @@ impl Client {
             )),
         };
 
+        // Build config with optional overrides
+        let mut cfg = DextradesConfig { default_rpc_urls: rpc_urls_clone, max_concurrent_requests, cache_size, providers_to_race, shard_logs, provider_strategy: provider_strategy_enum, ..Default::default() };
+        if let Some(nw) = network_overrides {
+            Python::with_gil(|py| -> PyResult<()> {
+                let any = nw.bind(py);
+                if let Ok(dict) = any.downcast::<pyo3::types::PyDict>() {
+                    let mut ov = NetworkOverrides::default();
+                    if let Ok(Some(val)) = dict.get_item("native_wrapped") { if let Ok(s) = val.extract::<String>() { ov.native_wrapped = Some(s); } }
+                    if let Ok(Some(val)) = dict.get_item("native_usd_aggregator") { if let Ok(s) = val.extract::<String>() { ov.native_usd_aggregator = Some(s); } }
+                    if let Ok(Some(val)) = dict.get_item("stable_addresses") { if let Ok(v) = val.extract::<Vec<String>>() { ov.stable_addresses = v; } }
+                    if let Ok(Some(val)) = dict.get_item("warmup_tokens") { if let Ok(v) = val.extract::<Vec<String>>() { ov.warmup_tokens = v; } }
+                    cfg.network_overrides = Some(ov);
+                }
+                Ok(())
+            })?;
+        }
+
         let service = rt
-            .block_on(async {
-                DextradesService::new(DextradesConfig {
-                    default_rpc_urls: rpc_urls_clone,
-                    max_concurrent_requests,
-                    cache_size,
-                    providers_to_race,
-                    shard_logs,
-                    provider_strategy: provider_strategy_enum,
-                    ..Default::default()
-                })
-                .await
-            })
+            .block_on(async { DextradesService::new(cfg).await })
             .map_err(|e: error::DextradesError| -> PyErr { e.to_py_err() })?;
 
         Ok(Self {
@@ -321,7 +331,7 @@ impl Client {
     ///     enrich_timestamps: Whether to enrich with block timestamps (slower)
     ///     max_concurrent_chunks: Maximum number of chunks to process concurrently (default: 3)
     ///     batches: Return Arrow batches if True, individual swaps if False (default: False)
-    #[pyo3(signature = (protocols, from_block, to_block, address=None, batch_size=None, enrich_timestamps=None, enrich_usd=None, max_concurrent_chunks=None, batches=false))]
+    #[pyo3(signature = (protocols, from_block, to_block, address=None, batch_size=None, enrich_timestamps=None, enrich_usd=None, max_concurrent_chunks=None, routers=None, batches=false))]
     fn stream_swaps(
         &self,
         py: Python<'_>,
@@ -333,6 +343,7 @@ impl Client {
         enrich_timestamps: Option<bool>,
         enrich_usd: Option<bool>,
         max_concurrent_chunks: Option<usize>,
+        routers: Option<Vec<String>>,
         batches: bool,
     ) -> PyResult<PyObject> {
         // Convert protocols to Vec<String>
@@ -361,6 +372,7 @@ impl Client {
                 enrich_timestamps,
                 enrich_usd,
                 max_concurrent_chunks,
+                routers.clone(),
             )?;
             Ok(Py::new(py, arrow_stream)?.into())
         } else {
@@ -376,6 +388,7 @@ impl Client {
                 enrich_timestamps,
                 enrich_usd,
                 max_concurrent_chunks,
+                routers.clone(),
             )?;
             let swap_stream = DextradesSwapStream::new(arrow_stream);
             Ok(Py::new(py, swap_stream)?.into())
@@ -394,7 +407,7 @@ impl Client {
     ///     to_block: Ending block number
     ///     address: Pool address to filter by (None for all pools)
     ///     enrich_timestamps: Whether to enrich with block timestamps (slower)
-    #[pyo3(signature = (protocols, from_block, to_block, address=None, enrich_timestamps=None, enrich_usd=None))]
+    #[pyo3(signature = (protocols, from_block, to_block, address=None, enrich_timestamps=None, enrich_usd=None, routers=None))]
     fn stream_individual_swaps(
         &self,
         py: Python<'_>,
@@ -404,6 +417,7 @@ impl Client {
         address: Option<String>,
         enrich_timestamps: Option<bool>,
         enrich_usd: Option<bool>,
+        routers: Option<Vec<String>>,
     ) -> PyResult<PyObject> {
         // Convert protocols to Vec<String>
         let protocols_vec: Vec<String> = if let Ok(protocol_str) = protocols.extract::<String>(py) {
@@ -428,6 +442,7 @@ impl Client {
             self.rpc_urls.clone(),
             enrich_timestamps,
             enrich_usd,
+            routers,
         )?;
         
         // Return individual swaps

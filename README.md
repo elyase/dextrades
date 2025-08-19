@@ -73,7 +73,6 @@ with dextrades.Client(urls) as client:
             "USD:", swap.get("value_usd"),
         )
 ```
-
 ### Example Output
 
 ```
@@ -84,6 +83,9 @@ time                 dex           bought           sold              value_usd 
 2023-04-08 01:58:47  Uniswap V2    0.0452  WETH      0.7000  QNT         $84.38  0x4a30  0x5428
 2023-04-08 01:58:47  Uniswap V2    3.2402  WETH      2.9994  PAXG     $6,045.62  0xdBC2  0x8f46
 ```
+
+
+
 ## 📊 Available Fields
 
 | Enricher | Fields Added | Description |
@@ -94,6 +96,47 @@ time                 dex           bought           sold              value_usd 
 | **token_metadata** | `token0_address`, `token1_address`, `token0_symbol`, `token1_symbol`, `token0_decimals`, `token1_decimals` | Token information |
 | **swap** | `token_bought_address`, `token_sold_address`, `token_bought_symbol`, `token_sold_symbol`, `token_bought_amount`, `token_sold_amount`, `token_bought_amount_raw`, `token_sold_amount_raw` | Trade direction & amounts |
 | **price_usd** | `value_usd`, `value_usd_method`, `chainlink_updated_at` | USD valuation (stablecoins + Chainlink ETH/USD) |
+
+
+### Network overrides (generic per-chain pricing)
+
+Provide network-specific overrides at client initialization to make USD pricing and warmup work on non-mainnet chains.
+
+```python
+overrides = {
+    # Wrapped native token address (e.g., WETH, wCAMP)
+    "native_wrapped": "0x4200000000000000000000000000000000000006",
+    # Chainlink-style native/USD aggregator (optional)
+    # "native_usd_aggregator": "0x...",
+    # Stablecoin addresses to treat as USD stables on this network
+    "stable_addresses": [
+        # "0x...", "0x..."
+    ],
+    # Optional warmup tokens that exist on the current network (avoid noisy warmup logs)
+    "warmup_tokens": []
+}
+
+with dextrades.Client(["<rpc-url>"], network_overrides=overrides) as client:
+    async for swap in client.stream_swaps(["uniswap_v2", "uniswap_v3"], 100, 100, enrich_usd=True):
+        ...
+```
+
+If no per-network aggregator is provided, USD pricing falls back to:
+- Stablecoin passthrough (by address or common stable symbols)
+- Native/USD via Chainlink only on Ethereum mainnet (default mainnet aggregator)
+
+### Router filter (optional)
+
+Filter to SmartRouter transactions only:
+
+```python
+async for swap in client.stream_swaps(["uniswap_v2","uniswap_v3"], 100, 100, routers=["0xRouter..."]):
+    ...
+
+# Also available for individual streaming:
+client.stream_individual_swaps(["uniswap_v2","uniswap_v3"], 100, 100, routers=["0xRouter..."])
+```
+
 
 
 ## 🗺️ Roadmap
@@ -124,4 +167,3 @@ time                 dex           bought           sold              value_usd 
 - [ ] Light metrics: stage counters and provider health snapshot
 - [ ] Additional DEX protocols
 - [ ] Optional persistent caches and Parquet/Polars export helpers
-
